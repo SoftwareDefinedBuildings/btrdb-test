@@ -1,0 +1,70 @@
+#!/usr/bin/env ipython
+
+from configobj import ConfigObj
+
+config = ConfigObj('benchmark.ini')
+
+btrdb_server = config['btrdb_server']
+loadgen_server = config['loadgen_server']
+
+btrdb_user = btrdb_server['user']
+btrdb_host = btrdb_server['host']
+
+loadgen_user = loadgen_server['user']
+loadgen_host = loadgen_server['host']
+
+def setup_node(user, host):
+    !scp -r assets {user}@{host}:~
+    !ssh {user}@{host} "sudo ./assets/install.sh"
+
+# Utility functions for the BTrDB node
+    
+def _btrdb(user, host, configpath, options):
+    !ssh {user}@{host} "cp {configpath} btrdb.conf && ./assets/btrdb.sh {options}"
+    
+def fresh_btrdb(configpath, user = btrdb_user, host = btrdb_host):
+    return _btrdb(user, host, configpath, "-f")
+    
+def restart_btrdb(configpath, user = btrdb_user, host = btrdb_host):
+    return _btrdb(user, host, configpath, "")
+    
+def stop_btrdb(user = btrdb_user, host = btrdb_host):
+    return _btrdb(user, host, "/dev/null", "-q")
+    
+# Utility functions on the Load Generator node
+
+CONFIG_BASE = """TOTAL_RECORDS=16777216
+TCP_CONNECTIONS={0}
+POINTS_PER_MESSAGE=4096
+NANOS_BETWEEN_POINTS=1048576
+MAX_TIME_RANDOM_OFFSET=1048575
+FIRST_TIME=1420582217226125312
+NUM_SERVERS=1
+DB_ADDR1=%s:4410
+NUM_STREAMS=1
+UUID1=73ee2f1a-fdf8-450c-804e-89f9c3c35dfb
+MAX_CONCURRENT_MESSAGES={1}
+RAND_SEED=15
+PERM_SEED=0
+DETERMINISTIC_KV={2}
+GET_MESSAGE_TIMES=false
+STATISTICAL_PW={3}
+""" % btrdb_host
+
+def get_config(TCP_CONNECTIONS=4, MAX_CONCURRENT_MESSAGES=12, DETERMINISTIC_KV=False, STATISTICAL_PW=-1):
+    DETERMINISTIC_KV = "true" if DETERMINISTIC_KV else "false"
+    return CONFIG_BASE.format(TCP_CONNECTIONS, MAX_CONCURRENT_MESSAGES, DETERMINITIC_KV, STATISTICAL_PW)
+    
+def benchmark_insert(name, config, user = loadgen_user, host = loadgen_host):
+    !ssh {user}@{host} "echo '{config}' > loadConfig.ini && quasarLoadGenerator -i > qlgoutput/{name}_insert"; echo $?
+    
+def benchmark_query(name, config, user = loadgen_user, host = loadgen_host):
+    !ssh {user}@{host} "echo '{config}' > loadConfig.ini && quasarLoadGenerator -q > qlgoutput/{name}_query && quasarLoadGenerator -v > qlgoutput/{name}_verify"; echo $?
+    
+    
+# First, set up the two nodes
+setup_node(btrdb_user, btrdb_host)
+setup_node(loadgen_user, loadgen_host)
+
+# Start BTrDB
+fresh_btrdb(configpath = "./assets/btrdb.conf")

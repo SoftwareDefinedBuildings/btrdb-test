@@ -21,7 +21,7 @@ else
     wget https://storage.googleapis.com/golang/go1.6.linux-amd64.tar.gz
     tar -C /usr/local -xzf go1.6.linux-amd64.tar.gz
     export PATH=$PATH:/usr/local/go/bin
-    echo "export PATH=\$PATH:/usr/local/go/bin" >> $HOME/.profile
+    sed -i "4iexport PATH=\$PATH:/usr/local/go/bin" $HOME/.bashrc
     sync
     date > installed/go-installed
     sync
@@ -36,7 +36,7 @@ else
     export GOPATH=$(pwd)/btrdb
     go get github.com/SoftwareDefinedBuildings/btrdb/btrdbd
     export PATH=$PATH:$GOPATH/bin
-    echo "export PATH=\$PATH:$GOPATH/bin" >> $HOME/.profile
+    sed -i "4iexport PATH=\$PATH:$GOPATH/bin" $HOME/.bashrc
     sync
     date > installed/btrdb-installed
     sync
@@ -52,7 +52,8 @@ else
     export GOPATH=$(pwd)/qlg
     go get github.com/SoftwareDefinedBuildings/quasarLoadGenerator
     export PATH=$PATH:$GOPATH/bin
-    echo "export PATH=\$PATH:$GOPATH/bin" >> $HOME/.profile
+    sed -i "4iexport PATH=\$PATH:$GOPATH/bin" $HOME/.bashrc
+    mkdir qlgoutput # Output of the load generator will go here
     sync
     date > installed/qlg-installed
     sync
