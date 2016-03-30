@@ -30,6 +30,7 @@ var (
 	NANOS_BETWEEN_POINTS int64
 	NUM_SERVERS int
 	NUM_STREAMS int
+	STREAM_CONCURRENCY int
 	FIRST_TIME int64
 	RAND_SEED int64
 	PERM_SEED int64
@@ -96,19 +97,17 @@ var insertPool sync.Pool = sync.Pool{
 	},
 }
 
-var get_time_value func (int64, *rand.Rand) float64
+var get_time_value func (int64, Randomish) float64
 
-func getRandValue (time int64, randGen *rand.Rand) float64 {
+func getRandValue (time int64, randGen Randomish) float64 {
 	// We technically don't need time anymore, but if we switch back to a sine wave later it's useful to keep it around as a parameter
 	return randGen.NormFloat64()
 }
 
-var sines [100]float64
+var sines [128]float64
 
-var sinesIndex = 100
-func getSinusoidValue (time int64, randGen *rand.Rand) float64 {
-	sinesIndex = (sinesIndex + 1) % 100;
-	return sines[sinesIndex];
+func getSinusoidValue (time int64, randGen Randomish) float64 {
+	return sines[time & 0x000000000000007F];
 }
 
 func min64 (x1 int64, x2 int64) int64 {
@@ -119,13 +118,15 @@ func min64 (x1 int64, x2 int64) int64 {
 	}
 }
 
-func insert_data(uuid []byte, connection net.Conn, sendLock *sync.Mutex, connID ConnectionID, response chan ConnectionID, streamID int, context MessageContext, permutation []int64, numMessages uint64) {
-	var currTime int64 = context.time
+func insert_data(uuid []byte, connection net.Conn, sendLock *sync.Mutex, connID ConnectionID, response chan ConnectionID, streamID int, context MessageContext) {
+	var currTime int64
 	var cont chan uint32 = context.cont
-	var randGen *rand.Rand = context.randGen
+	var randGen Randomish = context.randGen
 	var history []TransactionData = context.history
 	var j uint64
 	var echoTagBase uint64 = uint64(streamID) << orderBitlength
+	var permutation []int64 = context.permutation
+	var numMessages uint64 = uint64(len(permutation))
 	
 	// I used to get from the pool and put it back every iteration. Now I just get it once and keep it.
 	var mp InsertMessagePart = insertPool.Get().(InsertMessagePart)
@@ -204,13 +205,15 @@ var standQueryPool sync.Pool = sync.Pool{
 	},
 }
 
-func query_stand_data(uuid []byte, connection net.Conn, sendLock *sync.Mutex, connID ConnectionID, response chan ConnectionID, streamID int, context MessageContext, permutation []int64, numMessages uint64) {
-	var currTime int64 = context.time
+func query_stand_data(uuid []byte, connection net.Conn, sendLock *sync.Mutex, connID ConnectionID, response chan ConnectionID, streamID int, context MessageContext) {
+	var currTime int64
 	var cont chan uint32 = context.cont
 	var history []TransactionData = context.history
 	var messageLength int64 = NANOS_BETWEEN_POINTS * int64(POINTS_PER_MESSAGE)
 	var j uint64
 	var echoTagBase = uint64(streamID) << orderBitlength
+	var permutation []int64 = context.permutation
+	var numMessages uint64 = uint64(len(permutation))
 
 	// I used to get from the pool and put it back every iteration. Now I just get it once and keep it.
 	var mp QueryMessagePart = standQueryPool.Get().(QueryMessagePart)
@@ -277,13 +280,15 @@ var statQueryPool sync.Pool = sync.Pool{
 	},
 }
 
-func query_stat_data(uuid []byte, connection net.Conn, sendLock *sync.Mutex, connID ConnectionID, response chan ConnectionID, streamID int, context MessageContext, permutation []int64, numMessages uint64) {
-	var currTime int64 = context.time
+func query_stat_data(uuid []byte, connection net.Conn, sendLock *sync.Mutex, connID ConnectionID, response chan ConnectionID, streamID int, context MessageContext) {
+	var currTime int64
 	var cont chan uint32 = context.cont
 	var history []TransactionData = context.history
 	var messageLength int64 = NANOS_BETWEEN_POINTS * int64(POINTS_PER_MESSAGE)
 	var j uint64
 	var echoTagBase = uint64(streamID) << orderBitlength
+	var permutation []int64 = context.permutation
+	var numMessages uint64 = uint64(len(permutation))
 
 	// I used to get from the pool and put it back every iteration. Now I just get it once and keep it.
 	var mp StatQueryMessagePart = statQueryPool.Get().(StatQueryMessagePart)
@@ -330,7 +335,7 @@ func query_stat_data(uuid []byte, connection net.Conn, sendLock *sync.Mutex, con
 	response <- connID
 }
 
-func getExpTime(currTime int64, randGen *rand.Rand) int64 {
+func getExpTime(currTime int64, randGen Randomish) int64 {
 	if DETERMINISTIC_KV {
 		return currTime
 	} else {
@@ -340,6 +345,78 @@ func getExpTime(currTime int64, randGen *rand.Rand) int64 {
 
 func floatEquals(x float64, y float64) bool {
 	return math.Abs(x - y) < 1e-10 * math.Max(math.Abs(x), math.Abs(y))
+}
+
+/*
+func makeRandChan(r *rand.Rand) chan float64 {
+	var i int64
+	var limit int64 = 20000
+	var ret chan float64 = make(chan float64, limit)
+	var numiter int64 = limit >> 1
+	for i = 0; i < numiter; i++ {
+		ret <- r.Float64()
+		ret <- r.NormFloat64()
+	}
+	go func () {
+		for i < TOTAL_RECORDS {
+			var end = i + 0xFFFF
+			if end > TOTAL_RECORDS {
+				end = TOTAL_RECORDS
+			}
+			for ; i < end; i++ {
+				ret <- r.Float64()
+				ret <- r.NormFloat64()
+			}
+			runtime.Gosched()
+		}
+	}()
+	return ret
+}
+*/
+
+type Randomish interface {
+	Float64() float64
+	NormFloat64() float64
+}
+
+type CombinedRandom struct {
+	rands []*rand.Rand
+	curr int
+	count int
+	limit int
+}
+
+func (cr *CombinedRandom) Float64() float64 {
+	var rv float64 = cr.rands[cr.curr].Float64()
+	cr.count += 1
+	if cr.count == cr.limit {
+		cr.count = 0
+		cr.curr += 1
+	}
+	return rv
+}
+
+func (cr *CombinedRandom) NormFloat64() float64 {
+	var rv float64 = cr.rands[cr.curr].NormFloat64()
+	cr.count += 1
+	if cr.count == cr.limit {
+		cr.count = 0
+		cr.curr += 1
+	}
+	return rv
+}
+
+
+func makeRandomish(r *rand.Rand) Randomish {
+	return r
+}
+
+func makeCombinedRandomish(seedGen *rand.Rand, num int, limit int) Randomish {
+	var rands []*rand.Rand = make([]*rand.Rand, num)
+	for i := 0; i < num; i++ {
+		rands[i] = rand.New(rand.NewSource(seedGen.Int63()))
+	}
+	return &CombinedRandom{ rands: rands, curr: 0, count: 0, limit: limit }
 }
 
 func validateResponses(connection net.Conn, connLock *sync.Mutex, contexts []MessageContext, tempExpTimes []int64, receivedCounts []uint32, pass *bool, numUsing *int) {
@@ -373,7 +450,8 @@ func validateResponses(connection net.Conn, connLock *sync.Mutex, contexts []Mes
 		}
 
 		if VERIFY_RESPONSES {
-   			var randGen *rand.Rand = contexts[id].randGen
+   			var randGen Randomish = contexts[id].randGen
+			var permindex int = contexts[id].extra
 			var currTime int64 = contexts[id].time
 			var expTime int64
 			var num_records uint32
@@ -407,6 +485,13 @@ func validateResponses(connection net.Conn, connLock *sync.Mutex, contexts []Mes
 						*pass = false
 					}
 					currTime = currTime + NANOS_BETWEEN_POINTS
+				}
+				if currTime >= contexts[id].permutation[permindex] + NANOS_BETWEEN_POINTS * int64(POINTS_PER_MESSAGE) {
+					if permindex < len(contexts[id].permutation) - 1 {
+						// The if statement is to guard against the edge case where we "just" exhaust the permutation
+						permindex += 1
+						currTime = contexts[id].permutation[permindex]
+					}
 				}
 			} else {
 				records := responseSeg.StatisticalRecords().Values()
@@ -462,7 +547,8 @@ func validateResponses(connection net.Conn, connLock *sync.Mutex, contexts []Mes
 				// We still aren't done. We created an extra random number when we found that expTime is out of range, and we need that same expTime next time we receive something (if we generate it again, we will get the wrong result).
 				tempExpTimes[id] = expTime
 			}
-			contexts[id].time = currTime;
+			contexts[id].extra = permindex
+			contexts[id].time = currTime
 		}
 		
 		if final {
@@ -563,14 +649,16 @@ func bitLength(x int64) uint {
 
 type MessageContext struct {
 	cont chan uint32
-	randGen *rand.Rand
+	randGen Randomish
+	permutation []int64
 	time int64
 	history []TransactionData
+	extra int
 }
 
 func main() {
 	args := os.Args[1:]
-	var send_messages func([]byte, net.Conn, *sync.Mutex, ConnectionID, chan ConnectionID, int, MessageContext, []int64, uint64)
+	var send_messages func([]byte, net.Conn, *sync.Mutex, ConnectionID, chan ConnectionID, int, MessageContext)
 	var DELETE_POINTS bool = false
 	var queryMode bool = false
 	if len(args) > 0 && args[0] == "-i" {
@@ -630,11 +718,12 @@ func main() {
 	FIRST_TIME = getIntFromConfig("FIRST_TIME", config)
 	RAND_SEED = getIntFromConfig("RAND_SEED", config)
 	PERM_SEED = getIntFromConfig("PERM_SEED", config)
+	STREAM_CONCURRENCY = int(getIntFromConfig("STREAM_CONCURRENCY", config))
 	var maxConcurrentMessages int64 = getIntFromConfig("MAX_CONCURRENT_MESSAGES", config);
 	var timeRandOffset int64 = getIntFromConfig("MAX_TIME_RANDOM_OFFSET", config)
 	var pw int64 = getIntFromConfig("STATISTICAL_PW", config);
-	if TOTAL_RECORDS <= 0 || TCP_CONNECTIONS <= 0 || POINTS_PER_MESSAGE <= 0 || NANOS_BETWEEN_POINTS <= 0 || NUM_STREAMS <= 0 || maxConcurrentMessages <= 0 {
-		fmt.Println("TOTAL_RECORDS, TCP_CONNECTIONS, POINTS_PER_MESSAGE, NANOS_BETWEEN_POINTS, NUM_STREAMS, and MAX_CONCURRENT_MESSAGES must be positive.")
+	if TOTAL_RECORDS <= 0 || TCP_CONNECTIONS <= 0 || POINTS_PER_MESSAGE <= 0 || NANOS_BETWEEN_POINTS <= 0 || NUM_STREAMS <= 0 || STREAM_CONCURRENCY <= 0 || maxConcurrentMessages <= 0 {
+		fmt.Println("TOTAL_RECORDS, TCP_CONNECTIONS, POINTS_PER_MESSAGE, NANOS_BETWEEN_POINTS, NUM_STREAMS, STREAM_CONCURRENCY, and MAX_CONCURRENT_MESSAGES must be positive.")
 		os.Exit(1)
 	}
 	if pw < -1 {
@@ -688,8 +777,8 @@ func main() {
 	GET_MESSAGE_TIMES = (config["GET_MESSAGE_TIMES"].(string) == "true")
 	if DETERMINISTIC_KV {
 		get_time_value = getSinusoidValue;
-		for r := 0; r < 100; r++ {
-			sines[r] = math.Sin(2 * math.Pi * float64(r) / 100)
+		for r := 0; r < 128; r++ {
+			sines[r] = math.Sin(2 * math.Pi * float64(r) / 128)
 		}
 	} else {
 		get_time_value = getRandValue;
@@ -788,10 +877,10 @@ func main() {
 		usingConn[y] = make([]int, TCP_CONNECTIONS)
 	}
 	
-	var contexts []MessageContext = make([]MessageContext, NUM_STREAMS)
+	var numgoroutines int = NUM_STREAMS * STREAM_CONCURRENCY
+	var contexts []MessageContext = make([]MessageContext, numgoroutines)
 	
-	var randGen *rand.Rand
-	var startTimes []int64 = make([]int64, NUM_STREAMS)
+	var startTimes []int64 = make([]int64, numgoroutines)
 	var verification_test_pass bool = true
 	var perm [][]int64 = make([][]int64, NUM_STREAMS)
 	var pointsReceived []uint32
@@ -825,6 +914,7 @@ func main() {
 	
 	var startTime int64 = time.Now().UnixNano()
 	if DELETE_POINTS {
+		STREAM_CONCURRENCY = 1
 		for g := 0; g < NUM_STREAMS; g++ {
 			serverIndex = getServer(uuids[g])
 			connIndex = streamCounts[serverIndex] % TCP_CONNECTIONS
@@ -832,25 +922,59 @@ func main() {
 			streamCounts[serverIndex]++
 		}
 	} else {
-		for z := 0; z < NUM_STREAMS; z++ {
-			contexts[z].cont = make(chan uint32, maxConcurrentMessages)
-			contexts[z].randGen = rand.New(rand.NewSource(seedGen.Int63()))
-			contexts[z].time = FIRST_TIME
-			if GET_MESSAGE_TIMES {
-				contexts[z].history = make([]TransactionData, perm_size)
-			} else {
-				contexts[z].history = nil
+		// Number of messages to be sent per goroutine
+		var pergr uint64 = uint64(perm_size) / uint64(STREAM_CONCURRENCY)
+		if uint64(perm_size) % uint64(STREAM_CONCURRENCY) != 0 {
+			pergr += 1
+		}
+		if VERIFY_RESPONSES {
+			// Use the first NUM_STREAMS contexts
+			for w := 0; w < NUM_STREAMS; w++ {
+				// For each point sent, the random number generator is invoked twice
+				contexts[w].randGen = makeCombinedRandomish(seedGen, STREAM_CONCURRENCY, (int(pergr) * int(POINTS_PER_MESSAGE)) << 1)
 			}
-			serverIndex = getServer(uuids[z])
-			connIndex = streamCounts[serverIndex] % TCP_CONNECTIONS
-			usingConn[serverIndex][connIndex]++
-			streamCounts[serverIndex]++
-			if !VERIFY_RESPONSES {
-				go validateResponses(connections[serverIndex][connIndex], recvLocks[serverIndex][connIndex], contexts, tempExpTimes, pointsReceived, &verification_test_pass, &usingConn[serverIndex][connIndex])
-			} else if statistical {
-				tempExpTimes[z] = getExpTime(FIRST_TIME, randGen)
+			// So that we only spawn one query goroutine below
+			STREAM_CONCURRENCY = 1
+			pergr = uint64(perm_size)
+		} else {
+			for w := 0; w < NUM_STREAMS * STREAM_CONCURRENCY; w++ {
+				contexts[w].randGen = makeRandomish(rand.New(rand.NewSource(seedGen.Int63())))
 			}
-			go send_messages(uuids[z], connections[serverIndex][connIndex], sendLocks[serverIndex][connIndex], ConnectionID{serverIndex, connIndex}, sig, z, contexts[z], perm[z], uint64(perm_size))
+		}
+		for u := 0; u < NUM_STREAMS; u++ {
+			serverIndex = getServer(uuids[u])
+			var assignedpoints uint64 = 0
+			var toassign []int64
+			for v := 0; v < STREAM_CONCURRENCY; v++ {
+				z := (u * STREAM_CONCURRENCY) + v
+				contexts[z].cont = make(chan uint32, maxConcurrentMessages)
+				if GET_MESSAGE_TIMES {
+					contexts[z].history = make([]TransactionData, perm_size)
+				} else {
+					contexts[z].history = nil
+				}
+				
+				connIndex = streamCounts[serverIndex] % TCP_CONNECTIONS
+				usingConn[serverIndex][connIndex]++
+				streamCounts[serverIndex]++
+				
+				if !VERIFY_RESPONSES {
+					go validateResponses(connections[serverIndex][connIndex], recvLocks[serverIndex][connIndex], contexts, tempExpTimes, pointsReceived, &verification_test_pass, &usingConn[serverIndex][connIndex])
+				} else if statistical {
+					tempExpTimes[z] = getExpTime(FIRST_TIME, contexts[z].randGen)
+				}
+				if assignedpoints + pergr >= uint64(perm_size) {
+					toassign = perm[u][assignedpoints:]
+				} else {
+					toassign = perm[u][assignedpoints:assignedpoints + pergr]
+				}
+				contexts[z].permutation = toassign
+				if len(contexts[z].permutation) != 0 {
+					contexts[z].time = contexts[z].permutation[0]
+				}
+				go send_messages(uuids[u], connections[serverIndex][connIndex], sendLocks[serverIndex][connIndex], ConnectionID{serverIndex, connIndex}, sig, z, contexts[z])
+				assignedpoints += uint64(len(toassign))
+			}
 		}
 		
 		if VERIFY_RESPONSES {
@@ -887,7 +1011,7 @@ func main() {
 	}
 
 	var response ConnectionID
-	for k := 0; k < NUM_STREAMS; k++ {
+	for k := 0; k < NUM_STREAMS * STREAM_CONCURRENCY; k++ {
 		response = <-sig
 		serverIndex = response.serverIndex
 		connIndex = response.connectionIndex
