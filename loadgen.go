@@ -344,7 +344,7 @@ func getExpTime(currTime int64, randGen Randomish) int64 {
 }
 
 func floatEquals(x float64, y float64) bool {
-	return math.Abs(x - y) < 1e-10 * math.Max(math.Abs(x), math.Abs(y))
+	return (x == 0 && y == 0) || math.Abs(x - y) < 1e-10 * math.Max(math.Abs(x), math.Abs(y))
 }
 
 /*
@@ -488,7 +488,7 @@ func validateResponses(connection net.Conn, connLock *sync.Mutex, contexts []Mes
 				}
 				if currTime >= contexts[id].permutation[permindex] + NANOS_BETWEEN_POINTS * int64(POINTS_PER_MESSAGE) {
 					if permindex < len(contexts[id].permutation) - 1 {
-						// The if statement is to guard against the edge case where we "just" exhaust the permutation
+						// The if statement is to guard against the edge case where we "just" exhaust the permutation entry
 						permindex += 1
 						currTime = contexts[id].permutation[permindex]
 					}
@@ -534,6 +534,13 @@ func validateResponses(connection net.Conn, connLock *sync.Mutex, contexts []Mes
 						*pass = false
 					}
 					total_count += record.Count()
+				}
+				if currTime >= contexts[id].permutation[permindex] + NANOS_BETWEEN_POINTS * int64(POINTS_PER_MESSAGE) {
+					if permindex < len(contexts[id].permutation) - 1 {
+						// The if statement is to guard against the edge case where we "just" exhaust the permutation entry
+						permindex += 1
+						currTime = contexts[id].permutation[permindex]
+					}
 				}
 				if responseSeg.Final() {
 					if uint32(total_count) + receivedCounts[id] != POINTS_PER_MESSAGE {
