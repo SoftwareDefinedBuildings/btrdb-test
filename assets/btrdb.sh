@@ -2,7 +2,7 @@
 
 # This script starts or stops BTrDB.
 # -f means to start from a fresh database. -q means to stop the BTrDB without starting a new one.
-# This need NOT be run as root.
+# This need NOT be run as root. (It will escalate privilege when it needs to.)
 
 # Kill the database if it's running
 screen -X -S btrdb quit
@@ -25,11 +25,11 @@ then
             echo "osd pool default size = 1" >> ceph.conf
             ceph-deploy install $node
             ceph-deploy mon create-initial
-            cd ..
-            rm -rf cephdb
-            mkdir cephdb
-            ceph-deploy osd prepare myself:$(pwd)/cephdb
-            ceph-deploy osd activate myself:$(pwd)/cephdb
+            sudo rm -rf ../cephdb
+            sudo mkdir ../cephdb
+            sudo chown ceph:ceph ../cephdb
+            ceph-deploy osd prepare $node:$(pwd)/../cephdb
+            ceph-deploy osd activate $node:$(pwd)/../cephdb
             fi
         mkdir -p $HOME/db
         mongo btrdb --eval "db.dropDatabase();"
