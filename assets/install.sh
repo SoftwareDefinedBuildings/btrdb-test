@@ -1,13 +1,52 @@
 #!/usr/bin/env sh
 
 # This script installs the dependencies for BTrDB and for the load generator. It needs to be run as root.
+
+# -c means to install Ceph.
+# -n means to install NTP ONLY.
+
 if [ $(whoami) != "root" ]
 then
     echo "Root privilege required"
     exit 1
 fi
 
+# Get a valid IP address of this node that is not link-local
+ipaddr=$(hostname -I | cut -d ' ' -f 1)
+
+trueuser=$(who am i | cut -d ' ' -f 1)
+
+# Make sure every node can ssh into every other node without asking for user input
+mkdir -p .ssh
+cp assets/key .ssh/id_rsa
+cp assets/key.pub .ssh/id_rsa.pub
+chown $trueuser:$trueuser .ssh/id_rsa
+chown $trueuser:$trueuser .ssh/id_rsa.pub
+
+authorized=$(grep "$(cat assets/key.pub)" .ssh/authorized_keys)
+if [ -z $(ls .ssh/authorized_keys) ] || [ -z "$authorized" ]
+then
+    cat assets/key.pub >> .ssh/authorized_keys
+    chown $trueuser:$trueuser .ssh/authorized_keys
+    chmod 600 .ssh/authorized_keys
+fi
+nohostcheck="Host *
+    StrictHostKeyChecking no
+    UserKnownHostsFile=/dev/null"
+if [ "$(tail -n 3 /etc/ssh/ssh_config)" != "$nohostcheck" ]
+then
+    echo "$nohostcheck" >> /etc/ssh/ssh_config
+fi
+
 mkdir -p installed
+
+# Install NTP Only
+if [! -z $1] && [ $1 = "-n" ]
+then
+    apt-get install ntp
+    service ntp restart
+    exit
+fi
 
 # Apt-Get Install Dependencies
 apt-get -y install gcc git librados-dev mongodb
@@ -56,6 +95,30 @@ else
     mkdir qlgoutput # Output of the load generator will go here
     sync
     date > installed/qlg-installed
+    sync
+fi
+
+# Install Ceph
+if [ -z $1 ] || [ $1 != "-c" ]
+then
+    echo "Skipping installation of Ceph"
+elif [ $(ls installed | grep ceph-installed) ]
+then
+    echo "Ceph is already installed"
+    service ntp restart
+else
+    wget -q -O- 'https://download.ceph.com/keys/release.asc' | apt-key add -
+    echo deb http://download.ceph.com/debian-hammer/ $(lsb_release -sc) main | tee /etc/apt/sources.list.d/ceph.list
+    apt-get update
+    apt-get -y install ceph-deploy ntp
+    service ntp restart
+    
+    echo "$ipaddr $(hostname)" >> /etc/hosts
+    
+    # We'll just use the current user for deploying Ceph
+    
+    sync
+    date > installed/ceph-installed
     sync
 fi
 

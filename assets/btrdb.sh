@@ -13,6 +13,24 @@ then
     then
         # Delete database if it exists
         rm -rf $HOME/db
+        if [ ! -z $2 ] && [ $2 = "-c" ]
+        then
+            node=$(hostname)
+            mkdir -p ceph-cluster
+            cd ceph-cluster
+            ceph-deploy purge $node
+            ceph-deploy purgedata $node
+            ceph-deploy forgetkeys
+            ceph-deploy new $node
+            echo "osd pool default size = 1" >> ceph.conf
+            ceph-deploy install $node
+            ceph-deploy mon create-initial
+            cd ..
+            rm -rf cephdb
+            mkdir cephdb
+            ceph-deploy osd prepare myself:$(pwd)/cephdb
+            ceph-deploy osd activate myself:$(pwd)/cephdb
+            fi
         mkdir -p $HOME/db
         mongo btrdb --eval "db.dropDatabase();"
         

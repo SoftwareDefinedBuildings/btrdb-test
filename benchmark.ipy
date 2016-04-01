@@ -13,6 +13,8 @@ btrdb_host = btrdb_server['host']
 loadgen_user = loadgen_server['user']
 loadgen_host = loadgen_server['host']
 
+!yes | ssh-keygen -N "" -f "key"
+
 def setup_node(user, host):
     !scp -r assets {user}@{host}:~
     !ssh {user}@{host} "sudo ./assets/install.sh"
