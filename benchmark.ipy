@@ -15,9 +15,12 @@ loadgen_host = loadgen_server['host']
 
 !yes | ssh-keygen -N "" -f "key"
 
-def setup_node(user, host):
+def setup_node(user, host, ceph = False):
     !scp -r assets {user}@{host}:~
-    !ssh {user}@{host} "sudo ./assets/install.sh"
+    if ceph:
+        !ssh {user}@{host} "sudo ./assets/install.sh -c"
+    else:
+        !ssh {user}@{host} "sudo ./assets/install.sh"
 
 # Utility functions for the BTrDB node
     
@@ -65,7 +68,7 @@ def benchmark_query(name, config, user = loadgen_user, host = loadgen_host):
     
     
 # First, set up the two nodes
-setup_node(btrdb_user, btrdb_host)
+setup_node(btrdb_user, btrdb_host, True)
 setup_node(loadgen_user, loadgen_host)
 
 # Start BTrDB

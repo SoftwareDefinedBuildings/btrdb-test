@@ -117,6 +117,23 @@ else
     
     # We'll just use the current user for deploying Ceph
     
+    node=$(hostname)
+    mkdir -p ceph-cluster
+    cd ceph-cluster
+    ceph-deploy purge $node
+    ceph-deploy purgedata $node
+    ceph-deploy forgetkeys
+    ceph-deploy new $node
+    echo "osd pool default size = 1" >> ceph.conf
+    ceph-deploy install $node
+    ceph-deploy mon create-initial
+    sudo rm -rf ../cephdb
+    sudo mkdir ../cephdb
+    sudo chown ceph:ceph ../cephdb
+    ceph-deploy osd prepare $node:$(pwd)/../cephdb
+    ceph-deploy osd activate $node:$(pwd)/../cephdb
+    ceph-deploy admin $node
+    
     sync
     date > installed/ceph-installed
     sync
