@@ -87,7 +87,7 @@ then
     echo "Load Generator is already installed"
 else
     cd $HOME
-    mkdir btrdb-test
+    mkdir -p loadgen
     export GOPATH=$(pwd)/loadgen
     go get github.com/SoftwareDefinedBuildings/btrdb-test/loadgen
     export PATH=$PATH:$GOPATH/bin
@@ -118,22 +118,35 @@ else
     # We'll just use the current user for deploying Ceph
     
     node=$(hostname)
+    rm -rf ceph-cluster
+    su $trueuser -c "
     mkdir -p ceph-cluster
     cd ceph-cluster
     ceph-deploy purge $node
     ceph-deploy purgedata $node
     ceph-deploy forgetkeys
+    sleep 10
+    echo new
     ceph-deploy new $node
-    echo "osd pool default size = 1" >> ceph.conf
+    echo \"osd pool default size = 1\" >> ceph.conf
+    chown -R $trueuser:$trueuser .
+    echo install
     ceph-deploy install $node
     ceph-deploy mon create-initial
+    sleep 10
+    ceph-deploy gatherkeys $node
     sudo rm -rf ../cephdb
     sudo mkdir ../cephdb
     sudo chown ceph:ceph ../cephdb
-    ceph-deploy osd prepare $node:$(pwd)/../cephdb
-    ceph-deploy osd activate $node:$(pwd)/../cephdb
+    echo osd prepare
+    ceph-deploy osd prepare $node:$(pwd)/cephdb
+    echo osd activate
+    ceph-deploy osd activate $node:$(pwd)/cephdb
     ceph-deploy admin $node
-    
+    cd ..
+    "
+    chown -R $trueuser:$trueuser /etc/ceph
+    ls
     sync
     date > installed/ceph-installed
     sync

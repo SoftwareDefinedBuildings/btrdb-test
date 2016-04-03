@@ -79,4 +79,4 @@ print "Setting up Load Generator node"
 setup_node(loadgen_user, loadgen_host)
 
 # Start BTrDB
-fresh_btrdb(configpath = "./assets/btrdb.conf")
+fresh_btrdb(configpath = "./assets/btrdb_fs.conf")
