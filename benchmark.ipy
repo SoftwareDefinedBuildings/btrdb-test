@@ -1,6 +1,7 @@
 #!/usr/bin/env ipython
 
 from configobj import ConfigObj
+import boto3
 
 config = ConfigObj('benchmark.ini')
 
@@ -13,6 +14,7 @@ btrdb_host = btrdb_server['host']
 loadgen_user = loadgen_server['user']
 loadgen_host = loadgen_server['host']
 
+print "Generating ssh key..."
 !yes | ssh-keygen -N "" -f "key"
 
 def setup_node(user, host, ceph = False):
@@ -30,8 +32,11 @@ def _btrdb(user, host, configpath, options):
 def fresh_btrdb(configpath, user = btrdb_user, host = btrdb_host):
     return _btrdb(user, host, configpath, "-f")
     
-def restart_btrdb(configpath, user = btrdb_user, host = btrdb_host):
-    return _btrdb(user, host, configpath, "")
+def restart_btrdb(ceph, user = btrdb_user, host = btrdb_host):
+    if ceph:
+        return _btrdb(user, host, "assets/btrdb_ceph.conf", "")
+    else:
+        return _btrdb(user, host, "assets/btrdb_fs.conf", "")
     
 def stop_btrdb(user = btrdb_user, host = btrdb_host):
     return _btrdb(user, host, "/dev/null", "-q")
@@ -61,14 +66,16 @@ def get_config(TCP_CONNECTIONS=4, MAX_CONCURRENT_MESSAGES=12, DETERMINISTIC_KV=F
     return CONFIG_BASE.format(TCP_CONNECTIONS, MAX_CONCURRENT_MESSAGES, DETERMINITIC_KV, STATISTICAL_PW)
     
 def benchmark_insert(name, config, user = loadgen_user, host = loadgen_host):
-    !ssh {user}@{host} "echo '{config}' > loadConfig.ini && quasarLoadGenerator -i > qlgoutput/{name}_insert"; echo $?
+    !ssh {user}@{host} "echo '{config}' > loadConfig.ini && loadgen -i > loadgen-output/{name}_insert"; echo $?
     
 def benchmark_query(name, config, user = loadgen_user, host = loadgen_host):
-    !ssh {user}@{host} "echo '{config}' > loadConfig.ini && quasarLoadGenerator -q > qlgoutput/{name}_query && quasarLoadGenerator -v > qlgoutput/{name}_verify"; echo $?
+    !ssh {user}@{host} "echo '{config}' > loadConfig.ini && loadgen -q > loadgen-output/{name}_query && loadgen -v > loadgen-output/{name}_verify"; echo $?
     
     
 # First, set up the two nodes
+print "Setting up BTrDB node..."
 setup_node(btrdb_user, btrdb_host, True)
+print "Setting up Load Generator node"
 setup_node(loadgen_user, loadgen_host)
 
 # Start BTrDB

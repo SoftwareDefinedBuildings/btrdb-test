@@ -82,19 +82,19 @@ else
 fi
 
 # Install the Load Generator
-if [ $(ls installed | grep qlg-installed) ]
+if [ $(ls installed | grep loadgen-installed) ]
 then
-    echo "QuasarLoadGenerator is already installed"
+    echo "Load Generator is already installed"
 else
     cd $HOME
-    mkdir qlg
-    export GOPATH=$(pwd)/qlg
-    go get github.com/SoftwareDefinedBuildings/quasarLoadGenerator
+    mkdir btrdb-test
+    export GOPATH=$(pwd)/loadgen
+    go get github.com/SoftwareDefinedBuildings/btrdb-test/loadgen
     export PATH=$PATH:$GOPATH/bin
     sed -i "4iexport PATH=\$PATH:$GOPATH/bin" $HOME/.bashrc
-    mkdir qlgoutput # Output of the load generator will go here
+    mkdir -p loadgen-output # Output of the load generator will go here
     sync
-    date > installed/qlg-installed
+    date > installed/loadgen-installed
     sync
 fi
 
