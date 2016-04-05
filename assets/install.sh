@@ -14,7 +14,7 @@ fi
 # Get a valid IP address of this node that is not link-local
 ipaddr=$(hostname -I | cut -d ' ' -f 1)
 
-trueuser=$(who am i | cut -d ' ' -f 1)
+trueuser=$(who | cut -d ' ' -f 1)
 
 # Make sure every node can ssh into every other node without asking for user input
 mkdir -p .ssh
@@ -146,11 +146,13 @@ else
     cd ..
     "
     chown -R $trueuser:$trueuser /etc/ceph
-    ls
+    ls -l /etc/ceph
     sync
     date > installed/ceph-installed
     sync
 fi
+echo True user
+echo $trueuser
 
 # Mark Completion
 date > installed/all-installed

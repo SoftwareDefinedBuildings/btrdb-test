@@ -18,19 +18,22 @@ print "Generating ssh key..."
 !yes | ssh-keygen -N "" -f "key"
 
 def setup_node(user, host, ceph = False):
-    !scp -r assets {user}@{host}:~
+    !scp -o StrictHostKeyChecking=no -r assets {user}@{host}:~
     if ceph:
-        !ssh {user}@{host} "sudo ./assets/install.sh -c"
+        !ssh -o StrictHostKeyChecking=no {user}@{host} "sudo ./assets/install.sh -c"
     else:
-        !ssh {user}@{host} "sudo ./assets/install.sh"
+        !ssh -o StrictHostKeyChecking=no {user}@{host} "sudo ./assets/install.sh"
 
 # Utility functions for the BTrDB node
     
 def _btrdb(user, host, configpath, options):
-    !ssh {user}@{host} "cp {configpath} btrdb.conf && ./assets/btrdb.sh {options}"
+    !ssh -o StrictHostKeyChecking=no {user}@{host} "cp {configpath} btrdb.conf && ./assets/btrdb.sh {options}"
     
-def fresh_btrdb(configpath, user = btrdb_user, host = btrdb_host):
-    return _btrdb(user, host, configpath, "-f")
+def fresh_btrdb(ceph, user = btrdb_user, host = btrdb_host):
+    if ceph:
+        return _btrdb(user, host, "assets/btrdb_ceph.conf", "-f")
+    else:
+        return _btrdb(user, host, "assets/btrdb_fs.conf", "-f")
     
 def restart_btrdb(ceph, user = btrdb_user, host = btrdb_host):
     if ceph:
@@ -52,6 +55,7 @@ FIRST_TIME=1420582217226125312
 NUM_SERVERS=1
 DB_ADDR1=%s:4410
 NUM_STREAMS=1
+STREAM_CONCURRENCY=1
 UUID1=73ee2f1a-fdf8-450c-804e-89f9c3c35dfb
 MAX_CONCURRENT_MESSAGES={1}
 RAND_SEED=15
@@ -66,10 +70,10 @@ def get_config(TCP_CONNECTIONS=4, MAX_CONCURRENT_MESSAGES=12, DETERMINISTIC_KV=F
     return CONFIG_BASE.format(TCP_CONNECTIONS, MAX_CONCURRENT_MESSAGES, DETERMINITIC_KV, STATISTICAL_PW)
     
 def benchmark_insert(name, config, user = loadgen_user, host = loadgen_host):
-    !ssh {user}@{host} "echo '{config}' > loadConfig.ini && loadgen -i > loadgen-output/{name}_insert"; echo $?
+    !ssh -o StrictHostKeyChecking=no {user}@{host} "echo '{config}' > loadConfig.ini && loadgen -i > loadgen-output/{name}_insert"; echo $?
     
 def benchmark_query(name, config, user = loadgen_user, host = loadgen_host):
-    !ssh {user}@{host} "echo '{config}' > loadConfig.ini && loadgen -q > loadgen-output/{name}_query && loadgen -v > loadgen-output/{name}_verify"; echo $?
+    !ssh -o StrictHostKeyChecking=no {user}@{host} "echo '{config}' > loadConfig.ini && loadgen -q > loadgen-output/{name}_query && loadgen -v > loadgen-output/{name}_verify"; echo $?
     
     
 # First, set up the two nodes
@@ -79,4 +83,4 @@ print "Setting up Load Generator node"
 setup_node(loadgen_user, loadgen_host)
 
 # Start BTrDB
-fresh_btrdb(configpath = "./assets/btrdb_fs.conf")
+fresh_btrdb(ceph = False)
