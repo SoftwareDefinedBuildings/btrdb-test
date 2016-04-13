@@ -15,6 +15,10 @@ fi
 ipaddr=$(hostname -I | cut -d ' ' -f 1)
 
 trueuser=$(who | cut -d ' ' -f 1)
+if [ -z $trueuser ]
+then
+    trueuser="ubuntu"
+fi
 
 # Make sure every node can ssh into every other node without asking for user input
 mkdir -p .ssh
@@ -51,6 +55,7 @@ fi
 # Apt-Get Install Dependencies
 apt-get -y install gcc git librados-dev mongodb
 sync
+service mongodb start
 
 # Install Go 1.6
 if [ $(ls installed | grep go-installed) ]
@@ -93,6 +98,7 @@ else
     export PATH=$PATH:$GOPATH/bin
     sed -i "4iexport PATH=\$PATH:$GOPATH/bin" $HOME/.bashrc
     mkdir -p loadgen-output # Output of the load generator will go here
+    chown $trueuser:$trueuser loadgen-output
     sync
     date > installed/loadgen-installed
     sync
@@ -139,9 +145,9 @@ else
     sudo mkdir ../cephdb
     sudo chown ceph:ceph ../cephdb
     echo osd prepare
-    ceph-deploy osd prepare $node:$(pwd)/cephdb
+    ceph-deploy osd prepare $node:/home/$trueuser/cephdb
     echo osd activate
-    ceph-deploy osd activate $node:$(pwd)/cephdb
+    ceph-deploy osd activate $node:/home/$trueuser/cephdb
     ceph-deploy admin $node
     cd ..
     "

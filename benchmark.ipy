@@ -2,7 +2,17 @@
 
 from configobj import ConfigObj
 import boto3
+import csv
+import time
 
+print "Reading EC2 credentials file..."
+with open('credentials.csv', 'rb') as credfile:
+    reader = csv.DictReader(credfile)
+    row = reader.next()
+    access_key_id = row["Access Key Id"]
+    secret_access_key = row["Secret Access Key"]
+
+"""
 config = ConfigObj('benchmark.ini')
 
 btrdb_server = config['btrdb_server']
@@ -13,21 +23,72 @@ btrdb_host = btrdb_server['host']
 
 loadgen_user = loadgen_server['user']
 loadgen_host = loadgen_server['host']
+"""
 
-print "Generating ssh key..."
-!yes | ssh-keygen -N "" -f "key"
+#print "Generating ssh key..."
+#!yes | ssh-keygen -N "" -f "assets/key"
+
+"""
+public_key_file = open("assets/key.pub", "rb")
+public_key2 = public_key_file.read()
+public_key_file.close()
+"""
+
+print "Connecting to Amazon EC2..."
+ec2 = boto3.resource('ec2', aws_access_key_id=access_key_id, aws_secret_access_key=secret_access_key, region_name="us-east-1")
+#kpi = ec2.import_key_pair(DryRun=True, KeyName='btrdb_test_key', PublicKeyMaterial=bytes(public_key))
+vpc = ec2.Vpc("vpc-ffc37f9b")
+#vpc.create_security_group(DryRun=True, GroupName='btrdb-test', Description='Test Infrastructure')
+instances = ec2.create_instances(DryRun=False, ImageId="ami-df0607b5", InstanceType="t2.medium", \
+                                NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": "subnet-c0ccc299", "DeleteOnTermination": True, "AssociatePublicIpAddress": True}], \
+                                BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 16, "VolumeType": "gp2", "DeleteOnTermination": True}}], \
+                                Monitoring={"Enabled": False}, MinCount=1, MaxCount=1, KeyName='btrdb_test_key', Placement={"AvailabilityZone": "us-east-1d"})
+
+print "Wait for instances to start..."
+for instance in instances:
+    instance.wait_until_running()
+    
+# For some reason, I need to wait for some more time for the instances to become usable
+time.sleep(30)
+    
+public_ips = []
+local_ips = []
+print "Gathering instance metadata..."
+for instance in instances:
+    instance.load()
+    eth0 = instance.network_interfaces_attribute[0]
+    public_ip = eth0["Association"]["PublicIp"]
+    local_ip = eth0["PrivateIpAddress"]
+    public_ips.append(public_ip)
+    local_ips.append(local_ip)
+    
+btrdb_user = "ubuntu"
+btrdb_host = public_ips[0]
+btrdb_private_ip = local_ips[0]
+loadgen_user = "ubuntu"
+loadgen_host = public_ips[0]
+loadgen_private_ip = local_ips[0]
+
+"""
+btrdb_user = "ubuntu"
+btrdb_host = "52.91.85.0"
+btrdb_private_ip = "10.0.0.170"
+loadgen_user = btrdb_user
+loadgen_host = btrdb_host
+loadgen_private_ip = btrdb_private_ip
+"""
 
 def setup_node(user, host, ceph = False):
-    !scp -o StrictHostKeyChecking=no -r assets {user}@{host}:~
+    !scp -i assets/key -o StrictHostKeyChecking=no -r assets {user}@{host}:~
     if ceph:
-        !ssh -o StrictHostKeyChecking=no {user}@{host} "sudo ./assets/install.sh -c"
+        !ssh -i assets/key -o StrictHostKeyChecking=no {user}@{host} "sudo ./assets/install.sh -c"
     else:
-        !ssh -o StrictHostKeyChecking=no {user}@{host} "sudo ./assets/install.sh"
+        !ssh -i assets/key -o StrictHostKeyChecking=no {user}@{host} "sudo ./assets/install.sh"
 
 # Utility functions for the BTrDB node
     
 def _btrdb(user, host, configpath, options):
-    !ssh -o StrictHostKeyChecking=no {user}@{host} "cp {configpath} btrdb.conf && ./assets/btrdb.sh {options}"
+    !ssh -i assets/key -o StrictHostKeyChecking=no {user}@{host} "cp {configpath} btrdb.conf && ./assets/btrdb.sh {options}"
     
 def fresh_btrdb(ceph, user = btrdb_user, host = btrdb_host):
     if ceph:
@@ -63,17 +124,17 @@ PERM_SEED=0
 DETERMINISTIC_KV={2}
 GET_MESSAGE_TIMES=false
 STATISTICAL_PW={3}
-""" % btrdb_host
+""" % btrdb_private_ip
 
 def get_config(TCP_CONNECTIONS=4, MAX_CONCURRENT_MESSAGES=12, DETERMINISTIC_KV=False, STATISTICAL_PW=-1):
     DETERMINISTIC_KV = "true" if DETERMINISTIC_KV else "false"
-    return CONFIG_BASE.format(TCP_CONNECTIONS, MAX_CONCURRENT_MESSAGES, DETERMINITIC_KV, STATISTICAL_PW)
+    return CONFIG_BASE.format(TCP_CONNECTIONS, MAX_CONCURRENT_MESSAGES, DETERMINISTIC_KV, STATISTICAL_PW)
     
 def benchmark_insert(name, config, user = loadgen_user, host = loadgen_host):
-    !ssh -o StrictHostKeyChecking=no {user}@{host} "echo '{config}' > loadConfig.ini && loadgen -i > loadgen-output/{name}_insert"; echo $?
+    !ssh -i assets/key -o StrictHostKeyChecking=no {user}@{host} "echo '{config}' > loadConfig.ini && loadgen -i > loadgen-output/{name}_insert"; echo $?
     
 def benchmark_query(name, config, user = loadgen_user, host = loadgen_host):
-    !ssh -o StrictHostKeyChecking=no {user}@{host} "echo '{config}' > loadConfig.ini && loadgen -q > loadgen-output/{name}_query && loadgen -v > loadgen-output/{name}_verify"; echo $?
+    !ssh -i assets/key -o StrictHostKeyChecking=no {user}@{host} "echo '{config}' > loadConfig.ini && loadgen -q > loadgen-output/{name}_query && loadgen -v > loadgen-output/{name}_verify"; echo $?
     
     
 # First, set up the two nodes
