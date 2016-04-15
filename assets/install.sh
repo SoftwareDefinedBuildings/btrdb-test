@@ -44,8 +44,10 @@ fi
 
 mkdir -p installed
 
+apt-get update
+
 # Install NTP Only
-if [! -z $1] && [ $1 = "-n" ]
+if [ ! -z $1 ] && [ $1 = "-n" ]
 then
     apt-get install ntp
     service ntp restart
@@ -105,7 +107,7 @@ else
 fi
 
 # Install Ceph
-if [ -z $1 ] || [ $1 != "-c" ]
+if [ -z $1 ] || [ "-c" != $1 ]
 then
     echo "Skipping installation of Ceph"
 elif [ $(ls installed | grep ceph-installed) ]
@@ -119,38 +121,13 @@ else
     apt-get -y install ceph-deploy ntp
     service ntp restart
     
-    echo "$ipaddr $(hostname)" >> /etc/hosts
+    cat assets/hostfile >> /etc/hosts
     
     # We'll just use the current user for deploying Ceph
     
-    node=$(hostname)
+    selfnode=$(hostname)
     rm -rf ceph-cluster
-    su $trueuser -c "
-    mkdir -p ceph-cluster
-    cd ceph-cluster
-    ceph-deploy purge $node
-    ceph-deploy purgedata $node
-    ceph-deploy forgetkeys
-    sleep 10
-    echo new
-    ceph-deploy new $node
-    echo \"osd pool default size = 1\" >> ceph.conf
-    chown -R $trueuser:$trueuser .
-    echo install
-    ceph-deploy install $node
-    ceph-deploy mon create-initial
-    sleep 10
-    ceph-deploy gatherkeys $node
-    sudo rm -rf ../cephdb
-    sudo mkdir ../cephdb
-    sudo chown ceph:ceph ../cephdb
-    echo osd prepare
-    ceph-deploy osd prepare $node:/home/$trueuser/cephdb
-    echo osd activate
-    ceph-deploy osd activate $node:/home/$trueuser/cephdb
-    ceph-deploy admin $node
-    cd ..
-    "
+    su $trueuser -c "assets/install_ceph.sh \"$2\""
     chown -R $trueuser:$trueuser /etc/ceph
     ls -l /etc/ceph
     sync

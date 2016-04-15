@@ -12,9 +12,36 @@ with open('credentials.csv', 'rb') as credfile:
     access_key_id = row["Access Key Id"]
     secret_access_key = row["Secret Access Key"]
 
-"""
+
 config = ConfigObj('benchmark.ini')
 
+btrdb_nodes = config['btrdb_nodes']
+num_btrdb_nodes = int(btrdb_nodes['num_btrdb_nodes'])
+if num_btrdb_nodes < 1:
+    print "Need at least 1 BTrDB node: {0} specified".format(num_btrdb_nodes)
+    exit()
+    
+if num_btrdb_nodes > 4:
+    print "SANITY CHECK FAILED: too many BtrDB nodes (max is 4)"
+    exit()
+    
+ssds_per_node = int(btrdb_nodes['ssds_per_node'])
+if ssds_per_node < 1:
+    print "Need at least 1 additional SSD per node: {0} specified".format(ssds_per_node)
+    exit()
+    
+if ssds_per_node > 5:
+    print "SANITY CHECK FAILED: too many SSDs per node (max is 5)"
+    exit()
+    
+ssd_gb = int(btrdb_nodes['ssd_gb'])
+if ssd_gb < 4 or ssd_gb > 32:
+    print "SANITY CHECK FAILED: SSD size must be between 4 GB and 32 GB"
+    exit()
+    
+
+
+"""
 btrdb_server = config['btrdb_server']
 loadgen_server = config['loadgen_server']
 
@@ -39,28 +66,48 @@ ec2 = boto3.resource('ec2', aws_access_key_id=access_key_id, aws_secret_access_k
 #kpi = ec2.import_key_pair(DryRun=True, KeyName='btrdb_test_key', PublicKeyMaterial=bytes(public_key))
 vpc = ec2.Vpc("vpc-ffc37f9b")
 #vpc.create_security_group(DryRun=True, GroupName='btrdb-test', Description='Test Infrastructure')
+
+driveids = [chr(ord('b') + i) for i in xrange(ssds_per_node)]
+drives = " ".join(driveids)
+
+rootblockdevice = {"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 16, "VolumeType": "gp2", "DeleteOnTermination": True}}
+blockdevices = [{"DeviceName": "/dev/sd{0}".format(driveid), "Ebs": {"VolumeSize": ssd_gb, \
+                 "VolumeType": "gp2", "DeleteOnTermination": True}} for driveid in driveids]
+blockdevices.append(rootblockdevice)
+
 instances = ec2.create_instances(DryRun=False, ImageId="ami-df0607b5", InstanceType="t2.medium", \
-                                NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": "subnet-c0ccc299", "DeleteOnTermination": True, "AssociatePublicIpAddress": True}], \
-                                BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 16, "VolumeType": "gp2", "DeleteOnTermination": True}}], \
-                                Monitoring={"Enabled": False}, MinCount=1, MaxCount=1, KeyName='btrdb_test_key', Placement={"AvailabilityZone": "us-east-1d"})
+                                 NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": "subnet-c0ccc299", \
+                                 "Groups": ['sg-2503365d'], "DeleteOnTermination": True, \
+                                 "AssociatePublicIpAddress": True}], BlockDeviceMappings=blockdevices, \
+                                 Monitoring={"Enabled": False}, MinCount=num_btrdb_nodes, MaxCount=num_btrdb_nodes, \
+                                 KeyName='btrdb_test_key', Placement={"AvailabilityZone": "us-east-1d"}) \
 
 print "Wait for instances to start..."
 for instance in instances:
     instance.wait_until_running()
     
 # For some reason, I need to wait for some more time for the instances to become usable
-time.sleep(30)
+time.sleep(120)
     
+hostnames = []
 public_ips = []
 local_ips = []
 print "Gathering instance metadata..."
 for instance in instances:
     instance.load()
     eth0 = instance.network_interfaces_attribute[0]
-    public_ip = eth0["Association"]["PublicIp"]
-    local_ip = eth0["PrivateIpAddress"]
+    #public_ip = eth0["Association"]["PublicIp"]
+    #public_hostname = eth0["Association"]["PublicDnsName"]
+    #local_ip = eth0["PrivateIpAddresses"][0]["PrivateIpAddress"]
+    #private_hostname = eth0["PrivateIpAddresses"][0]["PrivateDnsName"]
+    
+    public_ip = instance.public_ip_address
+    local_ip = instance.private_ip_address
+    private_hostname = instance.private_dns_name.split(".")[0]
+    
     public_ips.append(public_ip)
     local_ips.append(local_ip)
+    hostnames.append(private_hostname)
     
 btrdb_user = "ubuntu"
 btrdb_host = public_ips[0]
@@ -68,6 +115,11 @@ btrdb_private_ip = local_ips[0]
 loadgen_user = "ubuntu"
 loadgen_host = public_ips[0]
 loadgen_private_ip = local_ips[0]
+
+print "Preparing for deployment..."
+with open("assets/hostfile", "w") as hostfile:
+    for i in xrange(len(hostnames)):
+        hostfile.write("{0} {1}\n".format(local_ips[i], hostnames[i]))
 
 """
 btrdb_user = "ubuntu"
@@ -81,7 +133,7 @@ loadgen_private_ip = btrdb_private_ip
 def setup_node(user, host, ceph = False):
     !scp -i assets/key -o StrictHostKeyChecking=no -r assets {user}@{host}:~
     if ceph:
-        !ssh -i assets/key -o StrictHostKeyChecking=no {user}@{host} "sudo ./assets/install.sh -c"
+        !ssh -i assets/key -o StrictHostKeyChecking=no {user}@{host} "sudo ./assets/install.sh -c {drives}"
     else:
         !ssh -i assets/key -o StrictHostKeyChecking=no {user}@{host} "sudo ./assets/install.sh"
 
